@@ -1,0 +1,129 @@
+{
+    // Use IntelliSense to learn about possible attributes.
+    // Hover to view descriptions of existing attributes.
+    // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "type": "java",
+            "name": "Current File",
+            "request": "launch",
+            "mainClass": "${file}"
+        },
+        {
+            "type": "java",
+            "name": "ClientRunner",
+            "request": "launch",
+            "mainClass": "ClientRunner",
+            "projectName": "fault-tolerant-db-consensus-system_eef853a6"
+        },
+        {
+            "type": "java",
+            "name": "GraderCommonSetup",
+            "request": "launch",
+            "mainClass": "GraderCommonSetup",
+            "projectName": "fault-tolerant-db-consensus-system_eef853a6"
+        },
+        {
+            "type": "java",
+            "name": "GraderConsistency",
+            "request": "launch",
+            "mainClass": "GraderConsistency",
+            "projectName": "fault-tolerant-db-consensus-system_eef853a6"
+        },
+        {
+            "type": "java",
+            "name": "GraderFaultTolerance",
+            "request": "launch",
+            "mainClass": "GraderFaultTolerance",
+            "projectName": "fault-tolerant-db-consensus-system_eef853a6"
+        },
+        {
+            "type": "java",
+            "name": "GraderFaultToleranceGradescope",
+            "request": "launch",
+            "mainClass": "GraderFaultToleranceGradescope",
+            "projectName": "fault-tolerant-db-consensus-system_eef853a6"
+        },
+        {
+            "type": "java",
+            "name": "ServerFailureRecoveryManager",
+            "request": "launch",
+            "mainClass": "ServerFailureRecoveryManager",
+            "projectName": "fault-tolerant-db-consensus-system_eef853a6"
+        },
+        {
+            "type": "java",
+            "name": "ServerRunner1",
+            "request": "launch",
+            "mainClass": "ServerRunner",
+            "projectName": "fault-tolerant-db-consensus-system_eef853a6",
+            "args": ["server0"]
+        },
+        {
+            "type": "java",
+            "name": "ServerRunner2",
+            "request": "launch",
+            "mainClass": "ServerRunner",
+            "projectName": "fault-tolerant-db-consensus-system_eef853a6",
+            "args": ["server1"]
+        },
+        {
+            "type": "java",
+            "name": "ServerRunner3",
+            "request": "launch",
+            "mainClass": "ServerRunner",
+            "projectName": "fault-tolerant-db-consensus-system_eef853a6",
+            "args": ["server2"]
+        },
+        {
+            "type": "java",
+            "name": "GettingStarted",
+            "request": "launch",
+            "mainClass": "cassandra.GettingStarted",
+            "projectName": "fault-tolerant-db-consensus-system_eef853a6"
+        },
+        {
+            "type": "java",
+            "name": "Client",
+            "request": "launch",
+            "mainClass": "client.Client",
+            "projectName": "fault-tolerant-db-consensus-system_eef853a6"
+        },
+        {
+            "type": "java",
+            "name": "MyDBReplicatedServer",
+            "request": "launch",
+            "mainClass": "server.MyDBReplicatedServer",
+            "projectName": "fault-tolerant-db-consensus-system_eef853a6"
+        },
+        {
+            "type": "java",
+            "name": "MyDBSingleServer",
+            "request": "launch",
+            "mainClass": "server.MyDBSingleServer",
+            "projectName": "fault-tolerant-db-consensus-system_eef853a6"
+        },
+        {
+            "type": "java",
+            "name": "ReplicatedServer",
+            "request": "launch",
+            "mainClass": "server.ReplicatedServer",
+            "projectName": "fault-tolerant-db-consensus-system_eef853a6"
+        },
+        {
+            "type": "java",
+            "name": "SingleServer",
+            "request": "launch",
+            "mainClass": "server.SingleServer",
+            "projectName": "fault-tolerant-db-consensus-system_eef853a6"
+        },
+        {
+            "type": "java",
+            "name": "MyDBFaultTolerantServerZK",
+            "request": "launch",
+            "mainClass": "server.faulttolerance.MyDBFaultTolerantServerZK",
+            "projectName": "fault-tolerant-db-consensus-system_eef853a6"
+        }
+    ]
+}

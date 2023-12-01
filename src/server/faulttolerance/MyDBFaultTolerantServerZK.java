@@ -11,6 +11,7 @@ import server.ReplicatedServer;
 
 import java.io.IOException;
 import java.net.InetSocketAddress;
+import java.nio.charset.StandardCharsets;
 import java.util.Collections;
 import java.util.List;
 import java.util.concurrent.ConcurrentHashMap;
@@ -87,6 +88,7 @@ public class MyDBFaultTolerantServerZK extends server.MyDBSingleServer implement
     protected final MessageNIOTransport<String,String> serverMessenger;
 
     protected String leader;
+	protected String leaderZnode;
     
     // this is the message queue used to track which messages have not been sent yet
     private ConcurrentHashMap<Long, JSONObject> queue = new ConcurrentHashMap<Long, JSONObject>();
@@ -140,19 +142,33 @@ public class MyDBFaultTolerantServerZK extends server.MyDBSingleServer implement
         try {
             this.zk = new ZooKeeper(ZK_HOST + ":" + DEFAULT_PORT, 3000, this);
 
-            // Create a znode for the replica
-            zk.create(ZK_ELECTION_PATH + "/" + this.myID, this.myID.getBytes(), ZooDefs.Ids.OPEN_ACL_UNSAFE, CreateMode.EPHEMERAL);
-            Stat stat = zk.exists(ZK_SERVICE_PATH + "/" + this.myID, false);
-            if (stat == null) 
-                zk.create(ZK_SERVICE_PATH + "/" + this.myID, this.myID.getBytes(), ZooDefs.Ids.OPEN_ACL_UNSAFE, CreateMode.PERSISTENT);
+			// Check if election path exists
+			Stat statElection = zk.exists(ZK_ELECTION_PATH, false);
+            if (statElection == null) 
+                zk.create(ZK_ELECTION_PATH, "".getBytes(), ZooDefs.Ids.OPEN_ACL_UNSAFE, CreateMode.PERSISTENT);	
+            
+			// Create an ephemeral znode for the replica
+			this.zk.create(ZK_ELECTION_PATH + "/" + "znode_", this.myID.getBytes(), ZooDefs.Ids.OPEN_ACL_UNSAFE, CreateMode.EPHEMERAL_SEQUENTIAL);
 
-            // elect a leader using cassandra's znodes 
+			//Check if Service path already exists
+            Stat statService = zk.exists(ZK_SERVICE_PATH , false);
+            if (statService == null)
+                zk.create(ZK_SERVICE_PATH, "".getBytes(), ZooDefs.Ids.OPEN_ACL_UNSAFE, CreateMode.PERSISTENT);
+			
+			//Check if server znode already exists and create it if it doesn't exist
+			Stat statServiceServer = zk.exists(ZK_SERVICE_PATH + "/" + this.myID , false);
+			if (statServiceServer == null)
+                zk.create(ZK_SERVICE_PATH + "/" + this.myID, this.myID.getBytes(), ZooDefs.Ids.OPEN_ACL_UNSAFE, CreateMode.PERSISTENT);
+            
+			// elect a leader using cassandra's znodes 
             List<String> children = zk.getChildren(ZK_ELECTION_PATH, true);
+			System.out.println("List of Children");
+			System.out.println(children.toString());
 
             // Set a watch on the replicas znode to monitor changes
             zk.exists(ZK_ELECTION_PATH, true);
 
-            electLeader(children); 
+            checkLeader(); 
         } catch (KeeperException | InterruptedException | IOException e) {
             e.printStackTrace();
         }
@@ -189,7 +205,7 @@ public class MyDBFaultTolerantServerZK extends server.MyDBSingleServer implement
             List<String> children = zk.getChildren(ZK_ELECTION_PATH, true);
 
             // check if leader is gone
-            if (!children.contains(this.leader)){
+            if (!children.contains(this.leaderZnode)){
                 electLeader(children);
             }
         } catch (KeeperException | InterruptedException e) {
@@ -199,14 +215,11 @@ public class MyDBFaultTolerantServerZK extends server.MyDBSingleServer implement
 
     // 'children' meant to be the list of znode children of the election
     private void electLeader(List<String> children) throws KeeperException, InterruptedException{
-        this.leader = Collections.max(children);
-        if (this.myID == this.leader){
-            // add leader znode
-            Stat stat = zk.exists(ZK_SERVICE_PATH + "/leader", false);
-            if (stat == null) 
-                zk.create(ZK_SERVICE_PATH + "/leader", "".getBytes(), ZooDefs.Ids.OPEN_ACL_UNSAFE, CreateMode.PERSISTENT);
-        }
-        return;
+        leaderZnode = Collections.min(children);
+		String leaderPath = ZK_ELECTION_PATH + "/" + leaderZnode;
+		System.out.println("Leader path is " + leaderPath);
+		this.leader = new String(this.zk.getData(leaderPath, false, null), StandardCharsets.UTF_8);
+		System.out.println("Leader is " + this.leader);
     }
 
     
