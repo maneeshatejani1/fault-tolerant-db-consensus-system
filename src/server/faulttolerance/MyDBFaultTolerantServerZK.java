@@ -15,12 +15,19 @@ import java.util.Collections;
 import java.util.List;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.logging.Level;
 
 import org.apache.zookeeper.*;
+import org.json.JSONException;
 import org.json.JSONObject;
 
 import com.datastax.driver.core.Cluster;
 import com.datastax.driver.core.Session;
+
+import client.MyDBClient;
+
+
+
 
 /**
  * This class should implement your replicated fault-tolerant database server if
@@ -146,32 +153,21 @@ public class MyDBFaultTolerantServerZK extends server.MyDBSingleServer implement
             zk.exists(ZK_ELECTION_PATH, true);
 
             // elect a leader using cassandra's znodes 
-            electLeader(); 
+            List<String> children = zk.getChildren(ZK_ELECTION_PATH, true);
+            electLeader(children); 
         } catch (KeeperException | InterruptedException | IOException e) {
             e.printStackTrace();
         }
 
 		// TODO: Make sure to do any needed crash recovery here.
+        crashRecovery();
 	}
 
-    private void electLeader() {
-        try {
-            // check if leader is gone
-            // if leader gone, elect
-            List<String> children = zk.getChildren(ZK_ELECTION_PATH, true);
-            if (children.contains(this.leader)){
-                
-            }
-
-            this.leader = Collections.max(children);
-
-            if (this.myID == this.leader){
-                // add leader znode
-            }
-        } catch (KeeperException | InterruptedException e) {
-            e.printStackTrace();
-        }
+    public void crashRecovery(){
+        // restore from checkpoint (on cassandra?)
+        // run commands again from logs
     }
+
 
     @Override
     public void process(WatchedEvent event) {
@@ -182,27 +178,86 @@ public class MyDBFaultTolerantServerZK extends server.MyDBSingleServer implement
                 break;
         
             case NodeChildrenChanged:
-                electLeader();
+                handleChildenChanged();
                 break;
-            
-            case NodeDeleted:
-                if(event.getPath() == ZK_ELECTION_PATH + "/" + this.leader){
-                    electLeader();
-                }
+
             default:
                 break;
         }
     }
 
-    public void crashRecovery(WatchedEvent event){
-        
+    private void electLeader(List<String> children) throws KeeperException, InterruptedException{
+        this.leader = Collections.max(children);
+        if (this.myID == this.leader){
+            // add leader znode
+        }
+        return;
+
     }
 
+    private void handleChildenChanged(){
+        try {
+            // check if leader is gone
+            List<String> children = zk.getChildren(ZK_ELECTION_PATH, true);
+
+            // if leader gone, elect
+            if (!children.contains(this.leader)){
+                electLeader(children);
+            }
+        } catch (KeeperException | InterruptedException e) {
+            e.printStackTrace();
+        }
+    }
 	/**
 	 * TODO: process bytes received from clients here.
 	 */
 	protected void handleMessageFromClient(byte[] bytes, NIOHeader header) {
-		throw new RuntimeException("Not implemented");
+		// this is a request sent by callbackSend method
+		String request = new String(bytes);
+		
+		log.log(Level.INFO, "{0} received client message {1} from {2}",
+                new Object[]{this.myID, request, header.sndr});
+        JSONObject json = null;
+        try {
+            json = new JSONObject(request);
+            request = json.getString(MyDBClient.Keys.REQUEST
+                    .toString());
+        } catch (JSONException e) {
+            //e.printStackTrace();
+        }
+		
+		// forward the request to the leader as a proposal        
+		try {
+			JSONObject packet = new JSONObject();
+			packet.put(MyDBClient.Keys.REQUEST.toString(), request);
+			packet.put(MyDBClient.Keys.TYPE.toString(), Type.REQUEST.toString());			
+			
+			this.serverMessenger.send(leader, packet.toString().getBytes());
+			log.log(Level.INFO, "{0} sends a REQUEST {1} to {2}", 
+					new Object[]{this.myID, packet, leader});
+		} catch (IOException | JSONException e1) {
+			// TODO Auto-generated catch block
+			e1.printStackTrace();
+		}
+        
+        
+        String response = "[success:"+new String(bytes)+"]";       
+        if(json!=null){
+        	try{
+        		json.put(MyDBClient.Keys.RESPONSE.toString(),
+                        response);
+                response = json.toString();
+            } catch (JSONException e) {
+                e.printStackTrace();
+        	}
+        }
+        
+        try{
+	        // when it's done send back response to client
+	        serverMessenger.send(header.sndr, response.getBytes());
+        } catch (IOException e) {
+        	e.printStackTrace();
+        }
 	}
 
 	/**
