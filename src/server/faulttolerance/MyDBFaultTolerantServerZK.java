@@ -202,6 +202,9 @@ public class MyDBFaultTolerantServerZK extends server.MyDBSingleServer implement
         this.leader = Collections.max(children);
         if (this.myID == this.leader){
             // add leader znode
+            Stat stat = zk.exists(ZK_SERVICE_PATH + "/leader", false);
+            if (stat == null) 
+                zk.create(ZK_SERVICE_PATH + "/leader", "".getBytes(), ZooDefs.Ids.OPEN_ACL_UNSAFE, CreateMode.PERSISTENT);
         }
         return;
     }
