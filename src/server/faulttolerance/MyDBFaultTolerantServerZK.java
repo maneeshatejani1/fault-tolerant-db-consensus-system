@@ -103,12 +103,6 @@ public class MyDBFaultTolerantServerZK extends server.MyDBSingleServer implement
     	return expected++;
     }
 
-    protected static enum Type {
-		REQUEST, // a server forwards a REQUEST to the leader
-		PROPOSAL, // the leader broadcast the REQUEST to all the nodes
-        ACKNOWLEDGEMENT; // all the nodes send back acknowledgement to the leader
-	}
-
 	/**
 	 * @param nodeConfig Server name/address configuration information read
 	 *                      from
@@ -149,11 +143,12 @@ public class MyDBFaultTolerantServerZK extends server.MyDBSingleServer implement
             zk.create(ZK_ELECTION_PATH + "/" + this.myID, this.myID.getBytes(), ZooDefs.Ids.OPEN_ACL_UNSAFE, CreateMode.EPHEMERAL);
             zk.create(ZK_SERVICE_PATH + "/" + this.myID, this.myID.getBytes(), ZooDefs.Ids.OPEN_ACL_UNSAFE, CreateMode.PERSISTENT);
 
+            // elect a leader using cassandra's znodes 
+            List<String> children = zk.getChildren(ZK_ELECTION_PATH, true);
+
             // Set a watch on the replicas znode to monitor changes
             zk.exists(ZK_ELECTION_PATH, true);
 
-            // elect a leader using cassandra's znodes 
-            List<String> children = zk.getChildren(ZK_ELECTION_PATH, true);
             electLeader(children); 
         } catch (KeeperException | InterruptedException | IOException e) {
             e.printStackTrace();
@@ -178,7 +173,7 @@ public class MyDBFaultTolerantServerZK extends server.MyDBSingleServer implement
                 break;
         
             case NodeChildrenChanged:
-                handleChildenChanged();
+                checkLeader();
                 break;
 
             default:
@@ -186,21 +181,11 @@ public class MyDBFaultTolerantServerZK extends server.MyDBSingleServer implement
         }
     }
 
-    private void electLeader(List<String> children) throws KeeperException, InterruptedException{
-        this.leader = Collections.max(children);
-        if (this.myID == this.leader){
-            // add leader znode
-        }
-        return;
-
-    }
-
-    private void handleChildenChanged(){
+    private void checkLeader(){
         try {
-            // check if leader is gone
             List<String> children = zk.getChildren(ZK_ELECTION_PATH, true);
 
-            // if leader gone, elect
+            // check if leader is gone
             if (!children.contains(this.leader)){
                 electLeader(children);
             }
@@ -208,6 +193,17 @@ public class MyDBFaultTolerantServerZK extends server.MyDBSingleServer implement
             e.printStackTrace();
         }
     }
+
+    // 'children' meant to be the list of znode children of the election
+    private void electLeader(List<String> children) throws KeeperException, InterruptedException{
+        this.leader = Collections.max(children);
+        if (this.myID == this.leader){
+            // add leader znode
+        }
+        return;
+    }
+
+    
 	/**
 	 * TODO: process bytes received from clients here.
 	 */
@@ -260,13 +256,141 @@ public class MyDBFaultTolerantServerZK extends server.MyDBSingleServer implement
         }
 	}
 
+
+    protected static enum Type {
+		REQUEST, // a server forwards a REQUEST to the leader
+		PROPOSAL, // the leader broadcast the REQUEST to all the nodes
+        ACKNOWLEDGEMENT; // all the nodes send back acknowledgement to the leader
+    }
 	/**
 	 * TODO: process bytes received from fellow servers here.
 	 */
-	protected void handleMessageFromServer(byte[] bytes, NIOHeader header) {
-		throw new RuntimeException("Not implemented");
-	}
+	protected void handleMessageFromServer(byte[] bytes, NIOHeader header) {        
 
+        // deserialize the request
+        JSONObject json = null;
+		try {
+			json = new JSONObject(new String(bytes));
+		} catch (JSONException e) {
+			// TODO Auto-generated catch block
+			e.printStackTrace();
+		}
+        
+        log.log(Level.INFO, "{0} received relayed message {1} from {2}",
+                new Object[]{this.myID, json, header.sndr}); // simply log
+        
+        // check the type of the request
+        try {
+			String type = json.getString(MyDBClient.Keys.TYPE.toString());
+			if (type.equals(Type.REQUEST.toString())){
+				if(myID.equals(leader)){
+					
+					// put the request into the queue
+					Long reqId = incrReqNum();
+					json.put(MyDBClient.Keys.REQNUM.toString(), reqId);
+					queue.put(reqId, json);
+					log.log(Level.INFO, "{0} put request {1} into the queue.",
+			                new Object[]{this.myID, json});
+					
+					if(isReadyToSend(expected)){
+			        	// retrieve the first request in the queue
+						JSONObject proposal = queue.remove(expected);
+						if(proposal != null) {
+							proposal.put(MyDBClient.Keys.TYPE.toString(), Type.PROPOSAL.toString());
+							enqueue();
+							broadcastRequest(proposal);
+						} else {
+							log.log(Level.INFO, "{0} is ready to send request {1}, but the message has already been retrieved.",
+					                new Object[]{this.myID, expected});
+						}
+						
+			        }
+				} else {
+					log.log(Level.SEVERE, "{0} received REQUEST message from {1} which should not be here.",
+			                new Object[]{this.myID, header.sndr});
+				}
+			} else if (type.equals(Type.PROPOSAL.toString())) {
+				
+				// execute the query and send back the acknowledgement
+				String query = json.getString(MyDBClient.Keys.REQUEST.toString());
+				long reqId = json.getLong(MyDBClient.Keys.REQNUM.toString());
+				
+				session.execute(query);
+				
+				JSONObject response = new JSONObject().put(MyDBClient.Keys.RESPONSE.toString(), this.myID)
+						.put(MyDBClient.Keys.REQNUM.toString(), reqId)
+						.put(MyDBClient.Keys.TYPE.toString(), Type.ACKNOWLEDGEMENT.toString());
+				serverMessenger.send(header.sndr, response.toString().getBytes());
+			} else if (type.equals(Type.ACKNOWLEDGEMENT.toString())) {
+				
+				// only the leader needs to handle acknowledgement
+				if(myID.equals(leader)){
+					// TODO: leader processes ack here
+					String node = json.getString(MyDBClient.Keys.RESPONSE.toString());
+					if (dequeue(node)){
+						// if the leader has received all acks, then prepare to send the next request
+						expected++;
+						if(isReadyToSend(expected)){
+							JSONObject proposal = queue.remove(expected);
+							if(proposal != null) {
+								proposal.put(MyDBClient.Keys.TYPE.toString(), Type.PROPOSAL.toString());
+								enqueue();
+								broadcastRequest(proposal);
+							} else {
+								log.log(Level.INFO, "{0} is ready to send request {1}, but the message has already been retrieved.",
+						                new Object[]{this.myID, expected});
+							}
+						}
+					}
+				} else {
+					log.log(Level.SEVERE, "{0} received ACKNOWLEDEMENT message from {1} which should not be here.",
+			                new Object[]{this.myID, header.sndr});
+				}
+			} else {
+				log.log(Level.SEVERE, "{0} received unrecongonized message from {1} which should not be here.",
+		                new Object[]{this.myID, header.sndr});
+			}
+			
+		} catch (JSONException | IOException e1) {
+			// TODO Auto-generated catch block
+			e1.printStackTrace();
+		}
+    }
+
+    private boolean isReadyToSend(long expectedId) {
+		if (queue.size() > 0 && queue.containsKey(expectedId)) {
+			return true;
+		}
+		return false;
+	}
+	
+	private void broadcastRequest(JSONObject req) {
+		for (String node : this.serverMessenger.getNodeConfig().getNodeIDs()){
+            try {
+                this.serverMessenger.send(node, req.toString().getBytes());
+            } catch (IOException e) {
+                e.printStackTrace();
+            }
+		}
+		log.log(Level.INFO, "The leader has broadcast the request {0}", new Object[]{req});
+	}
+	
+	private void enqueue(){
+		notAcked = new CopyOnWriteArrayList<String>();
+		for (String node : this.serverMessenger.getNodeConfig().getNodeIDs()){
+            notAcked.add(node);
+		}
+	}
+	
+	private boolean dequeue(String node) {
+		if(!notAcked.remove(node)){
+			log.log(Level.SEVERE, "The leader does not have the key {0} in its notAcked", new Object[]{node});
+		}
+		if(notAcked.size() == 0)
+			return true;
+		return false;
+	}
+	
 
 	/**
 	 * TODO: Gracefully close any threads or messengers you created.
