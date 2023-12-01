@@ -162,8 +162,8 @@ public class MyDBFaultTolerantServerZK extends server.MyDBSingleServer implement
             
 			// elect a leader using cassandra's znodes 
             List<String> children = zk.getChildren(ZK_ELECTION_PATH, true);
-			System.out.println("List of Children");
-			System.out.println(children.toString());
+			// System.out.println("List of Children");
+			// System.out.println(children.toString());
 
             // Set a watch on the replicas znode to monitor changes
             zk.exists(ZK_ELECTION_PATH, true);
@@ -217,9 +217,9 @@ public class MyDBFaultTolerantServerZK extends server.MyDBSingleServer implement
     private void electLeader(List<String> children) throws KeeperException, InterruptedException{
         leaderZnode = Collections.min(children);
 		String leaderPath = ZK_ELECTION_PATH + "/" + leaderZnode;
-		System.out.println("Leader path is " + leaderPath);
+		// System.out.println("Leader path is " + leaderPath);
 		this.leader = new String(this.zk.getData(leaderPath, false, null), StandardCharsets.UTF_8);
-		System.out.println("Leader is " + this.leader);
+		// System.out.println("Leader is " + this.leader);
     }
 
     
