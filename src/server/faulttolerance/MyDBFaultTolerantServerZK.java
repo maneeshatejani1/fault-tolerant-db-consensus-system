@@ -18,6 +18,7 @@ import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.logging.Level;
 
 import org.apache.zookeeper.*;
+import org.apache.zookeeper.data.Stat;
 import org.json.JSONException;
 import org.json.JSONObject;
 
@@ -141,7 +142,9 @@ public class MyDBFaultTolerantServerZK extends server.MyDBSingleServer implement
 
             // Create a znode for the replica
             zk.create(ZK_ELECTION_PATH + "/" + this.myID, this.myID.getBytes(), ZooDefs.Ids.OPEN_ACL_UNSAFE, CreateMode.EPHEMERAL);
-            zk.create(ZK_SERVICE_PATH + "/" + this.myID, this.myID.getBytes(), ZooDefs.Ids.OPEN_ACL_UNSAFE, CreateMode.PERSISTENT);
+            Stat stat = zk.exists(ZK_SERVICE_PATH + "/" + this.myID, false);
+            if (stat == null) 
+                zk.create(ZK_SERVICE_PATH + "/" + this.myID, this.myID.getBytes(), ZooDefs.Ids.OPEN_ACL_UNSAFE, CreateMode.PERSISTENT);
 
             // elect a leader using cassandra's znodes 
             List<String> children = zk.getChildren(ZK_ELECTION_PATH, true);
