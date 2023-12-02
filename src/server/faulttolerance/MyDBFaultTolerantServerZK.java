@@ -146,6 +146,12 @@ public class MyDBFaultTolerantServerZK extends server.MyDBSingleServer implement
                         }, true);
                     
         // Connect to Zookeeper server
+        //      PATHS                TYPE                    USED FOR          Description
+        //    /election           PERSISTENT             ?
+        //    /election/znode_#   EPHEMERAL_SEQUENTIAL   leader election
+        //    /election/leader    ?                      ?
+        //    /service            PERSISTENT             ?
+        //    /service/myID       PERSISTENT             ?
         try {
             this.zk = new ZooKeeper(ZK_HOST + ":" + DEFAULT_PORT, 3000, this);
 
@@ -246,20 +252,17 @@ public class MyDBFaultTolerantServerZK extends server.MyDBSingleServer implement
 
             session.execute("TRUNCATE " + tableName);
             
+            ////////////////////////////////////////////////////////////
+            // TESTING CODE ONLY TODO: DELETE THIS 
             int id1 = 1;
             List<Integer> events1 = Arrays.asList(90, 85, 92);
-
             int id2 = 2;
             List<Integer> events2 = Arrays.asList(88, 95, 91);
-
-            // Prepare the insert statement
             String insertQuery = "INSERT INTO " + tableName + " (id, events) VALUES (?, ?)";
             PreparedStatement preparedStatement = session.prepare(insertQuery);
-
-            // Execute the insert statement with the sample data
             session.execute(preparedStatement.bind(id1, events1));
             session.execute(preparedStatement.bind(id2, events2));
-
+            ///////////////////////////////////////////////////////////////
 
             // Use SELECT query to fetch data
             String selectQuery = String.format("SELECT * FROM %s", tableName);
@@ -374,7 +377,6 @@ public class MyDBFaultTolerantServerZK extends server.MyDBSingleServer implement
 
     
 	/**
-	 * TODO: process bytes received from clients here.
 	 */
 	protected void handleMessageFromClient(byte[] bytes, NIOHeader header) {
 		// this is a request sent by callbackSend method
@@ -401,7 +403,6 @@ public class MyDBFaultTolerantServerZK extends server.MyDBSingleServer implement
 			log.log(Level.INFO, "{0} sends a REQUEST {1} to {2}", 
 					new Object[]{this.myID, packet, leader});
 		} catch (IOException | JSONException e1) {
-			// TODO Auto-generated catch block
 			e1.printStackTrace();
 		}
         
@@ -432,7 +433,6 @@ public class MyDBFaultTolerantServerZK extends server.MyDBSingleServer implement
         ACKNOWLEDGEMENT; // all the nodes send back acknowledgement to the leader
     }
 	/**
-	 * TODO: process bytes received from fellow servers here.
 	 */
 	protected void handleMessageFromServer(byte[] bytes, NIOHeader header) {        
 
@@ -441,7 +441,6 @@ public class MyDBFaultTolerantServerZK extends server.MyDBSingleServer implement
 		try {
 			json = new JSONObject(new String(bytes));
 		} catch (JSONException e) {
-			// TODO Auto-generated catch block
 			e.printStackTrace();
 		}
         
@@ -504,7 +503,6 @@ public class MyDBFaultTolerantServerZK extends server.MyDBSingleServer implement
 				
 				// only the leader needs to handle acknowledgement
 				if(myID.equals(leader)){
-					// TODO: leader processes ack here
 					String node = json.getString(MyDBClient.Keys.RESPONSE.toString());
 					if (dequeue(node)){
 						// if the leader has received all acks, then prepare to send the next request
@@ -531,7 +529,6 @@ public class MyDBFaultTolerantServerZK extends server.MyDBSingleServer implement
 			}
 			
 		} catch (JSONException | IOException e1) {
-			// TODO Auto-generated catch block
 			e1.printStackTrace();
 		}
     }
@@ -575,7 +572,7 @@ public class MyDBFaultTolerantServerZK extends server.MyDBSingleServer implement
 	
 
 	/**
-	 * TODO: Gracefully close any threads or messengers you created.
+	 * TODO: Clean up tables and all 
 	 */
 	public void close() {
         super.close();
