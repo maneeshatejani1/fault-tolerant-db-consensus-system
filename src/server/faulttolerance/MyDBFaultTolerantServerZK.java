@@ -9,22 +9,29 @@ import edu.umass.cs.utils.Util;
 import server.MyDBReplicatedServer;
 import server.ReplicatedServer;
 
+import java.io.BufferedReader;
+import java.io.FileReader;
+import java.io.FileWriter;
 import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.logging.Level;
+import java.util.stream.Collectors;
 
 import org.apache.zookeeper.*;
 import org.apache.zookeeper.data.Stat;
 import org.json.JSONException;
 import org.json.JSONObject;
 
-import com.datastax.driver.core.Cluster;
-import com.datastax.driver.core.Session;
+import com.datastax.driver.core.*;
 
 import client.MyDBClient;
 
@@ -221,6 +228,139 @@ public class MyDBFaultTolerantServerZK extends server.MyDBSingleServer implement
 		this.leader = new String(this.zk.getData(leaderPath, false, null), StandardCharsets.UTF_8);
 		// System.out.println("Leader is " + this.leader);
     }
+
+    public void exportDataToCSV() {
+        ResultSet rsTables = session.execute("SELECT table_name FROM system_schema.tables WHERE keyspace_name = ?", session.getLoggedKeyspace());
+        List<String> tables = rsTables.all().stream().map(row -> row.getString("table_name")).collect(Collectors.toList());
+        for (String tableName : tables) {
+
+            session.execute("TRUNCATE " + tableName);
+            
+            int id1 = 1;
+            List<Integer> events1 = Arrays.asList(90, 85, 92);
+
+            int id2 = 2;
+            List<Integer> events2 = Arrays.asList(88, 95, 91);
+
+            // Prepare the insert statement
+            String insertQuery = "INSERT INTO " + tableName + " (id, events) VALUES (?, ?)";
+            PreparedStatement preparedStatement = session.prepare(insertQuery);
+
+            // Execute the insert statement with the sample data
+            session.execute(preparedStatement.bind(id1, events1));
+            session.execute(preparedStatement.bind(id2, events2));
+
+
+            // Use SELECT query to fetch data
+            String selectQuery = String.format("SELECT * FROM %s", tableName);
+            ResultSet resultSet = session.execute(selectQuery);
+
+            // Write data to CSV file
+            try (FileWriter csvWriter = new FileWriter("src/server/faulttolerance/backups/backup.csv", false)) {
+                // Get table metadata to determine column names
+                TableMetadata tableMetadata = cluster.getMetadata().getKeyspace(myID).getTable(tableName);
+                
+                for (Row row : resultSet) {
+                    // Write data to CSV file dynamically based on table metadata
+                    boolean firstColumn = true;
+
+                    for (ColumnMetadata column : tableMetadata.getColumns()) {
+                        if (!firstColumn) {
+                            csvWriter.append(", ");
+                        }
+
+                        csvWriter.append(column.getName());
+                        csvWriter.append(":");
+
+                        // Get values from the row dynamically based on column name
+                        Object rowValue = row.getObject(column.getName());
+                        String csvRowValue = rowValue instanceof ArrayList ? rowValue.toString().replace(" ", "") : rowValue.toString();
+                        csvWriter.append(csvRowValue);
+
+                        firstColumn = false;
+                    }
+
+                    csvWriter.append("\n");
+                }
+            } catch (IOException e) {
+                e.printStackTrace();
+            }
+        }
+    }
+
+    public void restoreDataFromCSV() {
+        ResultSet rsTables = session.execute("SELECT table_name FROM system_schema.tables WHERE keyspace_name = ?", session.getLoggedKeyspace());
+        List<String> tables = rsTables.all().stream().map(row -> row.getString("table_name")).collect(Collectors.toList());
+        for (String tableName : tables) {
+            session.execute("TRUNCATE " + tableName);
+            // try {Thread.sleep(100);} catch (InterruptedException e) {e.printStackTrace();} // TODO: put delay for cassandra if needed
+            // Read data from CSV file and insert into the Cassandra table
+            try (BufferedReader csvReader = new BufferedReader(new FileReader("src/server/faulttolerance/backups/backup.csv"))) {
+                String line;
+                boolean firstLine = true;
+                PreparedStatement preparedStatement = null;
+                while ((line = csvReader.readLine()) != null) {
+                    // Assuming a simple scenario where each CSV line corresponds to a row
+                    Map<String, Object> columns = parseCsvLine(line);
+
+                    if(firstLine){
+                        // Insert data into Cassandra table dynamically based on column names
+                        String insertQuery = String.format("INSERT INTO %s (%s) VALUES (%s)",
+                                tableName,
+                                String.join(", ", columns.keySet()),
+                                String.join(", ", Collections.nCopies(columns.size(), "?")));
+                        preparedStatement = session.prepare(insertQuery);
+                        firstLine = false;
+                    }
+
+                    List<Object> values = new ArrayList<>(columns.values());
+                    session.execute(preparedStatement.bind(values.toArray()));
+
+                    System.out.println("processing: " + values.toArray()[0].toString());
+                    // sleep after each insert since when we send them with no delay
+                    // cassandra writes them out of order
+                    // try {Thread.sleep(100);} catch (InterruptedException e) {e.printStackTrace();} // TODO: put delay for cassandra if needed
+                }                
+            } catch (IOException e) {
+                e.printStackTrace();
+            }
+        }
+    }
+
+    private Map<String, Object> parseCsvLine(String line) {
+        Map<String, Object> columns = new LinkedHashMap<>();
+
+        String[] parts = line.split(", ");
+        for (String part : parts) {
+            String[] keyValue = part.trim().split(":");
+            String key = keyValue[0].trim();
+            String value = keyValue[1].trim();
+            columns.put(key, convertValue(value));
+        }
+
+        return columns;
+    }
+
+    private Object convertValue(String value) {
+        if (value.contains("]")) {
+            // Parse as an array of integers
+            String[] parts = value.replaceAll("[\\[\\]]", "").split(",");
+            return Arrays.stream(parts)
+                        .map(String::trim)
+                        .map(Integer::parseInt)
+                        .collect(Collectors.toList());
+
+        } else {
+            // Parse as a single integer
+            try {
+                return Integer.parseInt(value.trim());
+            } catch (NumberFormatException e) {
+                // Handle the case where the value is not a valid integer
+                throw new IllegalArgumentException("Invalid integer value: " + value);
+            }
+        }
+    }
+
 
     
 	/**
