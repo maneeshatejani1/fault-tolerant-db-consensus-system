@@ -189,6 +189,12 @@ public class MyDBFaultTolerantServerZK extends server.MyDBSingleServer implement
         // run commands again from logs
     }
 
+    /**
+	 * TODO5: Implement the logic for this. 
+	 */
+	public List<String> getAliveNodes() {
+		//get a list of all nodes alive using the children under /leader
+	}
 
     @Override
     public void process(WatchedEvent event) {
@@ -227,6 +233,10 @@ public class MyDBFaultTolerantServerZK extends server.MyDBSingleServer implement
 		// System.out.println("Leader path is " + leaderPath);
 		this.leader = new String(this.zk.getData(leaderPath, false, null), StandardCharsets.UTF_8);
 		// System.out.println("Leader is " + this.leader);
+
+        /**
+		 * TODO4: Once a leader is elected, it needs to check if it is the leader and then restore the the previous leader's state. Basically check if the previous leader left any pending requests before crashing and if so,and execute those requests in the same manner that the leader does : i.e getting acks all alive servers before moving to the next one.
+		 */
     }
 
     public void exportDataToCSV() {
@@ -447,6 +457,9 @@ public class MyDBFaultTolerantServerZK extends server.MyDBSingleServer implement
 					// put the request into the queue
 					Long reqId = incrReqNum();
 					json.put(MyDBClient.Keys.REQNUM.toString(), reqId);
+                    /**
+					 * TODO1: Log the request to leader znode in case server crashes here
+					 */
 					queue.put(reqId, json);
 					log.log(Level.INFO, "{0} put request {1} into the queue.",
 			                new Object[]{this.myID, json});
@@ -458,6 +471,9 @@ public class MyDBFaultTolerantServerZK extends server.MyDBSingleServer implement
 							proposal.put(MyDBClient.Keys.TYPE.toString(), Type.PROPOSAL.toString());
 							enqueue();
 							broadcastRequest(proposal);
+                            /**
+						 		* TODO2: remove the request from leader server's znode since the leader has broadcasted all requests
+						 	*/
 						} else {
 							log.log(Level.INFO, "{0} is ready to send request {1}, but the message has already been retrieved.",
 					                new Object[]{this.myID, expected});
@@ -474,6 +490,10 @@ public class MyDBFaultTolerantServerZK extends server.MyDBSingleServer implement
 				String query = json.getString(MyDBClient.Keys.REQUEST.toString());
 				long reqId = json.getLong(MyDBClient.Keys.REQNUM.toString());
 				
+                /**
+				 * TODO3: Log the query to the server's persistent znode so that it can recover this log of executed requests during recovery
+				 */
+
 				session.execute(query);
 				
 				JSONObject response = new JSONObject().put(MyDBClient.Keys.RESPONSE.toString(), this.myID)
@@ -523,6 +543,9 @@ public class MyDBFaultTolerantServerZK extends server.MyDBSingleServer implement
 		return false;
 	}
 	
+    /**
+	* TODO6: Change the logic of this function to braodcast requests to only alive nodes and then for dead nodes, log the request in their respective znode so that they know where to pick up from
+	*/
 	private void broadcastRequest(JSONObject req) {
 		for (String node : this.serverMessenger.getNodeConfig().getNodeIDs()){
             try {
