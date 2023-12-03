@@ -554,6 +554,11 @@ public class MyDBFaultTolerantServerZK extends server.MyDBSingleServer implement
 		log.log(Level.INFO, "The leader has broadcast the request {0}", new Object[]{req});
 	}
 	
+    /*
+    * TODO 7: Change the logic of the Acknowledgement system such that either
+    * a) only a majority of ACKs are needed 
+    * b) only alive node ACKs are needed
+    */
 	private void enqueue(){
 		notAcked = new CopyOnWriteArrayList<String>();
 		for (String node : this.serverMessenger.getNodeConfig().getNodeIDs()){
