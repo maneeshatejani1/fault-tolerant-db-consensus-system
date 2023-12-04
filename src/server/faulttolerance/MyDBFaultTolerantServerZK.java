@@ -147,14 +147,7 @@ public class MyDBFaultTolerantServerZK extends server.MyDBSingleServer implement
                                 return true;
                             }
                         }, true);
-                    
-        // Connect to Zookeeper server
-        //      PATHS                TYPE                    USED FOR          Description
-        //    /election           PERSISTENT             ?
-        //    /election/znode_#   EPHEMERAL_SEQUENTIAL   leader election
-        //    /election/leader    ?                      ?
-        //    /service            PERSISTENT             ?
-        //    /service/myID       PERSISTENT             ?
+        //Setting up Znodes for leader election and Logging          
         try {
             this.zk = new ZooKeeper(ZK_HOST + ":" + DEFAULT_PORT, 3000, this);
 
@@ -254,7 +247,7 @@ public class MyDBFaultTolerantServerZK extends server.MyDBSingleServer implement
             String QueueString = new String(this.zk.getData(ZK_SERVICE_PATH, false, null), StandardCharsets.UTF_8);
             String[] Queue = QueueString.split("\n");
             for (String request: Queue){
-                System.out.println("Request in the queue" + request);
+                //System.out.println("Request in the queue" + request);
                 String[] requestParts = request.split(" ");
                 Long reqId = Long.parseLong(requestParts[0]);
                 String query = requestParts[1];
@@ -267,25 +260,7 @@ public class MyDBFaultTolerantServerZK extends server.MyDBSingleServer implement
                     e.printStackTrace();
                 }
             }
-
-            if(isReadyToSend(expected)){
-                // retrieve the first request in the queue
-                try {
-                    JSONObject proposal = queue.remove(expected);
-                    if(proposal != null) {
-                        proposal.put(MyDBClient.Keys.TYPE.toString(), Type.PROPOSAL.toString());
-                        enqueue();
-                        broadcastRequest(proposal);
-                        removeRequestFromLog(ZK_SERVICE_PATH);
-                    } else {
-                        log.log(Level.INFO, "{0} is ready to send request {1}, but the message has already been retrieved.",
-                                new Object[]{this.myID, expected});
-                    }
-                } catch (JSONException e){
-                    e.printStackTrace();
-                }
-						
-            }
+            executeQueue(expected);
         }
         catch (KeeperException | InterruptedException e) {
             e.printStackTrace();
@@ -307,7 +282,7 @@ public class MyDBFaultTolerantServerZK extends server.MyDBSingleServer implement
          * Fetch /service znode requests
          * 
 		 */
-        recoverLeaderQueue();
+        // recoverLeaderQueue();
     }
 
     public void exportDataToCSV() {
@@ -394,7 +369,7 @@ public class MyDBFaultTolerantServerZK extends server.MyDBSingleServer implement
                     List<Object> values = new ArrayList<>(columns.values());
                     session.execute(preparedStatement.bind(values.toArray()));
 
-                    System.out.println("processing: " + values.toArray()[0].toString());
+                    //System.out.println("processing: " + values.toArray()[0].toString());
                     // sleep after each insert since when we send them with no delay
                     // cassandra writes them out of order
                     // try {Thread.sleep(100);} catch (InterruptedException e) {e.printStackTrace();} // TODO: put delay for cassandra if needed
@@ -499,25 +474,52 @@ public class MyDBFaultTolerantServerZK extends server.MyDBSingleServer implement
     }
 
     /**
-     * Logs the query to the relevant znode
-	 */
-    protected void logRequest(String znode, JSONObject json, Long reqId){
+     * Logs the request to leader znode at /service
+     * Steps:
+     * Fetch the contents from the respective znode /service
+     * Append the current request message to the fetched value
+     * Send new content back to that znode
+     */
+    private void logRequest(String znode, JSONObject json, Long reqId){
         try{
             String oldLog = new String(this.zk.getData(znode, false, null), StandardCharsets.UTF_8);
-            System.out.println("Old Log: " + oldLog);
+            //System.out.println("Old Log: " + oldLog);
             String newLog = oldLog + "\n" + reqId + " " + json.toString();
-            System.out.println("New Log: " + newLog);
+            //System.out.println("New Log: " + newLog);
             this.zk.setData(znode,newLog.getBytes(), -1);
             String savedLog = new String(this.zk.getData(znode, false, null), StandardCharsets.UTF_8);
             log.log(Level.INFO, "Saved Log at the znode {0}: ", savedLog);
-            System.out.println(savedLog + "Saved Log at the znode");
+            //System.out.println(savedLog + "Saved Log at the znode");
         }
         catch (KeeperException | InterruptedException e) {
             e.printStackTrace();
         }
     }
 
-    protected void removeRequestFromLog(String znode){
+    private void logProposal(String query, Long reqId){
+        try{
+            // Get current log
+            byte[] currentData = zk.getData(ZK_SERVICE_PATH + "/" + myID, false, null);
+            String currentLog = new String(currentData);
+            String newLog;
+
+            // Check if the log has reached MAX_LOG_SIZE, make checkpoint and clear log if so
+            if (currentLog.split("\r\n|\r|\n").length >= MAX_LOG_SIZE) {
+                exportDataToCSV();
+                newLog = reqId + " " + query;
+            } else {
+                // else just append to the log
+                newLog = currentLog + "\n" + reqId + " " + query;
+            }
+            
+            // set new log
+            zk.setData(ZK_SERVICE_PATH + "/" + myID, newLog.getBytes(), -1);
+        } catch (KeeperException | InterruptedException e) {
+            e.printStackTrace();
+        }
+    }
+    
+    private void removeRequestFromLog(String znode){
         try{
             String oldLog = new String(this.zk.getData(znode, false, null), StandardCharsets.UTF_8);
             String newLog = oldLog.substring(oldLog.indexOf("\n")+1);
@@ -531,6 +533,7 @@ public class MyDBFaultTolerantServerZK extends server.MyDBSingleServer implement
             e.printStackTrace();
         }
     }
+
 	/**
 	 */
 	protected void handleMessageFromServer(byte[] bytes, NIOHeader header) {        
@@ -555,39 +558,14 @@ public class MyDBFaultTolerantServerZK extends server.MyDBSingleServer implement
 					// put the request into the queue
 					Long reqId = incrReqNum();
 					json.put(MyDBClient.Keys.REQNUM.toString(), reqId);
-                    
-                    /**
-					 * TODO 1: Log the request to leader znode in case server crashes here
-                     * Logic
-                     * Fetch the contents from the respective znode /service
-                     * Append the current request message to the fetched value
-                     * Send new content back to that znode
-					 */
 
-                    
+                    //log the request to leader znode in case server crashes here
                     logRequest(ZK_SERVICE_PATH, json,reqId);
-                    
 					queue.put(reqId, json);
 					log.log(Level.INFO, "{0} put request {1} into the queue.",
 			                new Object[]{this.myID, json});
 					
-					if(isReadyToSend(expected)){
-			        	// retrieve the first request in the queue
-						JSONObject proposal = queue.remove(expected);
-						if(proposal != null) {
-							proposal.put(MyDBClient.Keys.TYPE.toString(), Type.PROPOSAL.toString());
-							enqueue();
-							broadcastRequest(proposal);
-                            removeRequestFromLog(ZK_SERVICE_PATH);
-                            /**
-						 		* TODO 2: remove the request from leader server's znode since the leader has broadcasted all requests
-						 	*/
-						} else {
-							log.log(Level.INFO, "{0} is ready to send request {1}, but the message has already been retrieved.",
-					                new Object[]{this.myID, expected});
-						}
-						
-			        }
+                    executeQueue(expected);
 				} else {
 					log.log(Level.SEVERE, "{0} received REQUEST message from {1} which should not be here.",
 			                new Object[]{this.myID, header.sndr});
@@ -597,30 +575,13 @@ public class MyDBFaultTolerantServerZK extends server.MyDBSingleServer implement
 				// execute the query and send back the acknowledgement
 				String query = json.getString(MyDBClient.Keys.REQUEST.toString());
 				long reqId = json.getLong(MyDBClient.Keys.REQNUM.toString());
+
+                //Log Request to it's znode
+                logProposal(query, reqId);
 				
-                try{
-                    // Get current log
-                    byte[] currentData = zk.getData(ZK_SERVICE_PATH + "/" + myID, false, null);
-                    String currentLog = new String(currentData);
-                    String newLog;
 
-                    // Check if the log has reached MAX_LOG_SIZE, make checkpoint and clear log if so
-                    if (currentLog.split("\r\n|\r|\n").length >= MAX_LOG_SIZE) {
-                        exportDataToCSV();
-                        newLog = reqId + " " + query;
-                    } else {
-                        // else just append to the log
-                        newLog = currentLog + "\n" + reqId + " " + query;
-                    }
-                    
-                    // set new log
-                    zk.setData(ZK_SERVICE_PATH + "/" + myID, newLog.getBytes(), -1);
-                } catch (KeeperException | InterruptedException e) {
-                    e.printStackTrace();
-                }
-
-				// session.execute(query);
-                System.out.println("Query is " + query);
+				session.execute(query);
+                //System.out.println("Query is " + query);
 				
 				JSONObject response = new JSONObject().put(MyDBClient.Keys.RESPONSE.toString(), this.myID)
 						.put(MyDBClient.Keys.REQNUM.toString(), reqId)
@@ -634,17 +595,7 @@ public class MyDBFaultTolerantServerZK extends server.MyDBSingleServer implement
 					if (dequeue(node)){
 						// if the leader has received all acks, then prepare to send the next request
 						expected++;
-						if(isReadyToSend(expected)){
-							JSONObject proposal = queue.remove(expected);
-							if(proposal != null) {
-								proposal.put(MyDBClient.Keys.TYPE.toString(), Type.PROPOSAL.toString());
-								enqueue();
-								broadcastRequest(proposal);
-							} else {
-								log.log(Level.INFO, "{0} is ready to send request {1}, but the message has already been retrieved.",
-						                new Object[]{this.myID, expected});
-							}
-						}
+						executeQueue(expected);
 					}
 				} else {
 					log.log(Level.SEVERE, "{0} received ACKNOWLEDEMENT message from {1} which should not be here.",
@@ -658,6 +609,31 @@ public class MyDBFaultTolerantServerZK extends server.MyDBSingleServer implement
 		} catch (JSONException | IOException e1) {
 			e1.printStackTrace();
 		}
+    }
+
+    
+    /**
+     * Execute message at head of the queue when required(i.e when the previous proposal got ACked by all)
+	 */
+    private void executeQueue(long expected) {
+        if(isReadyToSend(expected)){
+                // retrieve the first request in the queue
+                try {
+                    JSONObject proposal = queue.remove(expected);
+                    if(proposal != null) {
+                        proposal.put(MyDBClient.Keys.TYPE.toString(), Type.PROPOSAL.toString());
+                        enqueue();
+                        broadcastRequest(proposal);
+                        removeRequestFromLog(ZK_SERVICE_PATH);
+                    } else {
+                        log.log(Level.INFO, "{0} is ready to send request {1}, but the message has already been retrieved.",
+                                new Object[]{this.myID, expected});
+                    }
+                } catch (JSONException e){
+                    e.printStackTrace();
+                }
+						
+        }
     }
 
     private boolean isReadyToSend(long expectedId) {
