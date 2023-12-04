@@ -16,7 +16,7 @@ public class ServerRunner {
         ("conf/servers.properties", ReplicatedServer.SERVER_PREFIX, ReplicatedServer
                 .SERVER_PORT_OFFSET);
         //System.out.println(nodeConfigServer.getNodeIDs());
-       new MyDBFaultTolerantServerZK(nodeConfigServer, args[0], new InetSocketAddress("localhost", 9042));
+       new MyDBFaultTolerantServerZK(nodeConfigServer, "server0", new InetSocketAddress("localhost", 9042));
         
     }
 }

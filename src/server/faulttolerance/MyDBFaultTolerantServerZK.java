@@ -10,6 +10,7 @@ import server.MyDBReplicatedServer;
 import server.ReplicatedServer;
 
 import java.io.BufferedReader;
+import java.io.FileNotFoundException;
 import java.io.FileReader;
 import java.io.FileWriter;
 import java.io.IOException;
@@ -188,7 +189,27 @@ public class MyDBFaultTolerantServerZK extends server.MyDBSingleServer implement
 
     public void crashRecovery(){
         // restore from checkpoint (on cassandra?)
+        restoreDataFromCSV();
+
         // run commands again from logs
+        try{
+            byte[] currentData = zk.getData(ZK_SERVICE_PATH + "/" + myID, false, null);
+            String[] currentLog = new String(currentData).split("\r\n|\r|\n");
+
+            for (String line : currentLog) {
+                String[] parts = line.split("\\s+", 2);
+
+                if (parts.length == 2) {
+                    String reqId = parts[0];
+                    String requestString = parts[1];
+
+                    // Call session.execute with the requestString
+                    session.execute(requestString);
+                }
+            }
+        } catch (KeeperException | InterruptedException e){
+            e.printStackTrace();
+        }
     }
 
     /**
@@ -298,20 +319,6 @@ public class MyDBFaultTolerantServerZK extends server.MyDBSingleServer implement
         List<String> tables = rsTables.all().stream().map(row -> row.getString("table_name")).collect(Collectors.toList());
         for (String tableName : tables) {
 
-            session.execute("TRUNCATE " + tableName);
-            
-            ////////////////////////////////////////////////////////////
-            // TESTING CODE ONLY TODO: DELETE THIS 
-            int id1 = 1;
-            List<Integer> events1 = Arrays.asList(90, 85, 92);
-            int id2 = 2;
-            List<Integer> events2 = Arrays.asList(88, 95, 91);
-            String insertQuery = "INSERT INTO " + tableName + " (id, events) VALUES (?, ?)";
-            PreparedStatement preparedStatement = session.prepare(insertQuery);
-            session.execute(preparedStatement.bind(id1, events1));
-            session.execute(preparedStatement.bind(id2, events2));
-            ///////////////////////////////////////////////////////////////
-
             // Use SELECT query to fetch data
             String selectQuery = String.format("SELECT * FROM %s", tableName);
             ResultSet resultSet = session.execute(selectQuery);
@@ -354,7 +361,6 @@ public class MyDBFaultTolerantServerZK extends server.MyDBSingleServer implement
         List<String> tables = rsTables.all().stream().map(row -> row.getString("table_name")).collect(Collectors.toList());
         for (String tableName : tables) {
             session.execute("TRUNCATE " + tableName);
-            // try {Thread.sleep(100);} catch (InterruptedException e) {e.printStackTrace();} // TODO: put delay for cassandra if needed
             // Read data from CSV file and insert into the Cassandra table
             try (BufferedReader csvReader = new BufferedReader(new FileReader("src/server/faulttolerance/backups/backup.csv"))) {
                 String line;
@@ -366,6 +372,7 @@ public class MyDBFaultTolerantServerZK extends server.MyDBSingleServer implement
 
                     if(firstLine){
                         // Insert data into Cassandra table dynamically based on column names
+                        // Only need to make prepared statement once
                         String insertQuery = String.format("INSERT INTO %s (%s) VALUES (%s)",
                                 tableName,
                                 String.join(", ", columns.keySet()),
@@ -376,12 +383,10 @@ public class MyDBFaultTolerantServerZK extends server.MyDBSingleServer implement
 
                     List<Object> values = new ArrayList<>(columns.values());
                     session.execute(preparedStatement.bind(values.toArray()));
-
-                    //System.out.println("processing: " + values.toArray()[0].toString());
-                    // sleep after each insert since when we send them with no delay
-                    // cassandra writes them out of order
-                    // try {Thread.sleep(100);} catch (InterruptedException e) {e.printStackTrace();} // TODO: put delay for cassandra if needed
                 }                
+            } catch (FileNotFoundException e) {
+                // Handle the case where the file does not exist
+                System.err.println("backup.csv not found: no checkpoints have been made yet");
             } catch (IOException e) {
                 e.printStackTrace();
             }
