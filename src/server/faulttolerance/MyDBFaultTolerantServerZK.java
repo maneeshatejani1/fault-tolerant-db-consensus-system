@@ -174,7 +174,7 @@ public class MyDBFaultTolerantServerZK extends server.MyDBSingleServer implement
                 zk.create(ZK_SERVICE_PATH + "/" + this.myID, this.myID.getBytes(), ZooDefs.Ids.OPEN_ACL_UNSAFE, CreateMode.PERSISTENT);
             
 			// elect a leader using cassandra's znodes 
-            List<String> children = zk.getChildren(ZK_ELECTION_PATH, true);
+            // List<String> children = zk.getChildren(ZK_ELECTION_PATH, true);
 			// System.out.println("List of Children");
 			// System.out.println(children.toString());
 
@@ -239,6 +239,7 @@ public class MyDBFaultTolerantServerZK extends server.MyDBSingleServer implement
 		// System.out.println("Leader path is " + leaderPath);
 		this.leader = new String(this.zk.getData(leaderPath, false, null), StandardCharsets.UTF_8);
 		// System.out.println("Leader is " + this.leader);
+
 
         /**
 		 * TODO 4: Once a leader is elected, it needs to check if it is the leader and then restore the the previous leader's state. Basically check if the previous leader left any pending requests before crashing and if so,and execute those requests in the same manner that the leader does : i.e getting acks all alive servers before moving to the next one.
@@ -432,6 +433,38 @@ public class MyDBFaultTolerantServerZK extends server.MyDBSingleServer implement
 		PROPOSAL, // the leader broadcast the REQUEST to all the nodes
         ACKNOWLEDGEMENT; // all the nodes send back acknowledgement to the leader
     }
+
+    /**
+     * Logs the query to the relevant znode
+	 */
+    protected void logRequest(String znode, String query){
+        try{
+            String oldLog = new String(this.zk.getData(znode, false, null), StandardCharsets.UTF_8);
+            String newLog = oldLog + "\n" + query;
+            this.zk.setData(znode,newLog.getBytes(), -1);
+            String savedLog = new String(this.zk.getData(znode, false, null), StandardCharsets.UTF_8);
+            System.out.println(savedLog + "Saved Log at the znode");
+        }
+        catch (KeeperException | InterruptedException e) {
+            e.printStackTrace();
+        }
+    }
+
+    protected void removeRequestFromLog(String znode){
+        try{
+            String exampleString = "HelloWorld\nManeesha\nTimothy";
+            String newExampleString = exampleString.substring(exampleString.indexOf("\n")+1);
+            System.out.println(newExampleString);
+            String oldLog = new String(this.zk.getData(znode, false, null), StandardCharsets.UTF_8);
+            // String removedRequest = oldLog.substring(0, oldLog.indexOf("\n"));
+            String newLog = oldLog.substring(oldLog.indexOf("\n")+1);
+            this.zk.setData(znode,newLog.getBytes(), -1);
+
+        }
+        catch (KeeperException | InterruptedException e) {
+            e.printStackTrace();
+        }
+    }
 	/**
 	 */
 	protected void handleMessageFromServer(byte[] bytes, NIOHeader header) {        
@@ -458,7 +491,15 @@ public class MyDBFaultTolerantServerZK extends server.MyDBSingleServer implement
 					json.put(MyDBClient.Keys.REQNUM.toString(), reqId);
                     /**
 					 * TODO 1: Log the request to leader znode in case server crashes here
+                     * Logic
+                     * Fetch the contents from the respective znode /service
+                     * Append the current request message to the fetched value
+                     * Send new content back to that znode
 					 */
+
+                    
+                    logRequest(ZK_SERVICE_PATH, json.getString(MyDBClient.Keys.REQUEST.toString()))
+                    
 					queue.put(reqId, json);
 					log.log(Level.INFO, "{0} put request {1} into the queue.",
 			                new Object[]{this.myID, json});
@@ -493,7 +534,8 @@ public class MyDBFaultTolerantServerZK extends server.MyDBSingleServer implement
 				 * TODO 3: Log the query to the server's persistent znode so that it can recover this log of executed requests during recovery
 				 */
 
-				session.execute(query);
+				// session.execute(query);
+                System.out.println("Query is " + query);
 				
 				JSONObject response = new JSONObject().put(MyDBClient.Keys.RESPONSE.toString(), this.myID)
 						.put(MyDBClient.Keys.REQNUM.toString(), reqId)
