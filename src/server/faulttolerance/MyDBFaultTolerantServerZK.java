@@ -530,9 +530,26 @@ public class MyDBFaultTolerantServerZK extends server.MyDBSingleServer implement
 				String query = json.getString(MyDBClient.Keys.REQUEST.toString());
 				long reqId = json.getLong(MyDBClient.Keys.REQNUM.toString());
 				
-                /**
-				 * TODO 3: Log the query to the server's persistent znode so that it can recover this log of executed requests during recovery
-				 */
+                try{
+                    // Get current log
+                    byte[] currentData = zk.getData(ZK_SERVICE_PATH + "/" + myID, false, null);
+                    String currentLog = new String(currentData);
+                    String newLog;
+
+                    // Check if the log has reached MAX_LOG_SIZE, make checkpoint and clear log if so
+                    if (currentLog.split("\r\n|\r|\n").length >= MAX_LOG_SIZE) {
+                        exportDataToCSV();
+                        newLog = reqId + " " + query;
+                    } else {
+                        // else just append to the log
+                        newLog = currentLog + "\n" + reqId + " " + query;
+                    }
+                    
+                    // set new log
+                    zk.setData(ZK_SERVICE_PATH + "/" + myID, newLog.getBytes(), -1);
+                } catch (KeeperException | InterruptedException e) {
+                    e.printStackTrace();
+                }
 
 				// session.execute(query);
                 System.out.println("Query is " + query);
