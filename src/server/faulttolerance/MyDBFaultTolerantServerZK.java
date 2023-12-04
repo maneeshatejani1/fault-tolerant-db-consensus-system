@@ -21,6 +21,7 @@ import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.logging.Level;
@@ -201,7 +202,21 @@ public class MyDBFaultTolerantServerZK extends server.MyDBSingleServer implement
 	 * TODO 5: Implement the logic for this. 
 	 */
 	public List<String> getAliveNodes() {
-		//get a list of all nodes alive using the children under /leader
+        try{
+            //get a list of all alive nodes 
+            List<String> children = zk.getChildren(ZK_ELECTION_PATH, true);
+            List<String> dataFromChildren = new ArrayList<>();
+            for(String child : children){
+                String childPath = ZK_ELECTION_PATH + "/" + child;
+                byte[] data = zk.getData(childPath, false, null);
+                String dataAsString = new String(data);
+                dataFromChildren.add(dataAsString);
+            }
+            return dataFromChildren;
+        } catch (KeeperException | InterruptedException e) {
+            e.printStackTrace();
+            return null;
+        }
 	}
 
     @Override
@@ -609,14 +624,32 @@ public class MyDBFaultTolerantServerZK extends server.MyDBSingleServer implement
 	* TODO 6: Change the logic of this function to braodcast requests to only alive nodes and then for dead nodes, log the request in their respective znode so that they know where to pick up from
 	*/
 	private void broadcastRequest(JSONObject req) {
-		for (String node : this.serverMessenger.getNodeConfig().getNodeIDs()){
-            try {
-                this.serverMessenger.send(node, req.toString().getBytes());
-            } catch (IOException e) {
-                e.printStackTrace();
+        try {
+            Set<String> allNodes = this.serverMessenger.getNodeConfig().getNodeIDs();
+            List<String> aliveNodes = getAliveNodes();
+            Long reqId = req.getLong(MyDBClient.Keys.REQNUM.toString());
+            String query = req.getString(MyDBClient.Keys.REQNUM.toString());
+            for (String node : allNodes){
+                if (!aliveNodes.contains(node)) {
+                    // Get current log
+                    byte[] currentData = zk.getData(ZK_SERVICE_PATH + "/" + node, false, null);
+                    String currentLog = new String(currentData);
+                    String newLog;
+
+                    // simply append to log
+                    // TODO handle case where log overflows MAX_SIZE_LOG
+                    newLog = currentLog + "\n" + reqId + " " + query;
+                    
+                    // set new log
+                    zk.setData(ZK_SERVICE_PATH + "/" + node, newLog.getBytes(), -1);
+                } else {
+                    this.serverMessenger.send(node, req.toString().getBytes());
+                }
             }
-		}
-		log.log(Level.INFO, "The leader has broadcast the request {0}", new Object[]{req});
+            log.log(Level.INFO, "The leader has broadcast the request {0}", new Object[]{req});
+        } catch (KeeperException | InterruptedException | IOException | JSONException e ) {
+            e.printStackTrace();
+        }
 	}
 	
     /*
