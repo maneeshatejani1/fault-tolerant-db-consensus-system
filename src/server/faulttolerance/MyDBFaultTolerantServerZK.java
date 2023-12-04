@@ -199,8 +199,8 @@ public class MyDBFaultTolerantServerZK extends server.MyDBSingleServer implement
     }
 
     /**
-	 * TODO 5: Implement the logic for this. 
-	 */
+	 * TODO 5: Implement the logic for this.
+	 */ 
 	public List<String> getAliveNodes() {
         try{
             //get a list of all alive nodes 
@@ -249,6 +249,50 @@ public class MyDBFaultTolerantServerZK extends server.MyDBSingleServer implement
         }
     }
 
+    private void recoverLeaderQueue() {
+        try{
+            String QueueString = new String(this.zk.getData(ZK_SERVICE_PATH, false, null), StandardCharsets.UTF_8);
+            String[] Queue = QueueString.split("\n");
+            for (String request: Queue){
+                System.out.println("Request in the queue" + request);
+                String[] requestParts = request.split(" ");
+                Long reqId = Long.parseLong(requestParts[0]);
+                String query = requestParts[1];
+                JSONObject json = null;
+                try {
+                    json = new JSONObject(query);
+                    json.put(MyDBClient.Keys.REQNUM.toString(), reqId);
+                    queue.put(reqId, json);
+                } catch (JSONException e) {
+                    e.printStackTrace();
+                }
+            }
+
+            if(isReadyToSend(expected)){
+                // retrieve the first request in the queue
+                try {
+                    JSONObject proposal = queue.remove(expected);
+                    if(proposal != null) {
+                        proposal.put(MyDBClient.Keys.TYPE.toString(), Type.PROPOSAL.toString());
+                        enqueue();
+                        broadcastRequest(proposal);
+                        removeRequestFromLog(ZK_SERVICE_PATH);
+                    } else {
+                        log.log(Level.INFO, "{0} is ready to send request {1}, but the message has already been retrieved.",
+                                new Object[]{this.myID, expected});
+                    }
+                } catch (JSONException e){
+                    e.printStackTrace();
+                }
+						
+            }
+        }
+        catch (KeeperException | InterruptedException e) {
+            e.printStackTrace();
+        }
+
+    }
+
     // 'children' meant to be the list of znode children of the election
     private void electLeader(List<String> children) throws KeeperException, InterruptedException{
         leaderZnode = Collections.min(children);
@@ -256,11 +300,14 @@ public class MyDBFaultTolerantServerZK extends server.MyDBSingleServer implement
 		// System.out.println("Leader path is " + leaderPath);
 		this.leader = new String(this.zk.getData(leaderPath, false, null), StandardCharsets.UTF_8);
 		System.out.println("Leader is " + this.leader);
-
+        
 
         /**
 		 * TODO 4: Once a leader is elected, it needs to check if it is the leader and then restore the the previous leader's state. Basically check if the previous leader left any pending requests before crashing and if so,and execute those requests in the same manner that the leader does : i.e getting acks all alive servers before moving to the next one.
+         * Fetch /service znode requests
+         * 
 		 */
+        recoverLeaderQueue();
     }
 
     public void exportDataToCSV() {
@@ -454,11 +501,11 @@ public class MyDBFaultTolerantServerZK extends server.MyDBSingleServer implement
     /**
      * Logs the query to the relevant znode
 	 */
-    protected void logRequest(String znode, String query){
+    protected void logRequest(String znode, JSONObject json, Long reqId){
         try{
             String oldLog = new String(this.zk.getData(znode, false, null), StandardCharsets.UTF_8);
             System.out.println("Old Log: " + oldLog);
-            String newLog = oldLog + "\n" + query;
+            String newLog = oldLog + "\n" + reqId + " " + json.toString();
             System.out.println("New Log: " + newLog);
             this.zk.setData(znode,newLog.getBytes(), -1);
             String savedLog = new String(this.zk.getData(znode, false, null), StandardCharsets.UTF_8);
@@ -472,12 +519,11 @@ public class MyDBFaultTolerantServerZK extends server.MyDBSingleServer implement
 
     protected void removeRequestFromLog(String znode){
         try{
-            String exampleString = "HelloWorld\nManeesha\nTimothy";
-            String newExampleString = exampleString.substring(exampleString.indexOf("\n")+1);
-            System.out.println(newExampleString);
             String oldLog = new String(this.zk.getData(znode, false, null), StandardCharsets.UTF_8);
-            // String removedRequest = oldLog.substring(0, oldLog.indexOf("\n"));
             String newLog = oldLog.substring(oldLog.indexOf("\n")+1);
+            if (!newLog.contains("/n")){
+                newLog = "";
+            }
             this.zk.setData(znode,newLog.getBytes(), -1);
 
         }
@@ -509,6 +555,7 @@ public class MyDBFaultTolerantServerZK extends server.MyDBSingleServer implement
 					// put the request into the queue
 					Long reqId = incrReqNum();
 					json.put(MyDBClient.Keys.REQNUM.toString(), reqId);
+                    
                     /**
 					 * TODO 1: Log the request to leader znode in case server crashes here
                      * Logic
@@ -518,7 +565,7 @@ public class MyDBFaultTolerantServerZK extends server.MyDBSingleServer implement
 					 */
 
                     
-                    logRequest(ZK_SERVICE_PATH, json.getString(MyDBClient.Keys.REQUEST.toString()));
+                    logRequest(ZK_SERVICE_PATH, json,reqId);
                     
 					queue.put(reqId, json);
 					log.log(Level.INFO, "{0} put request {1} into the queue.",
@@ -652,11 +699,6 @@ public class MyDBFaultTolerantServerZK extends server.MyDBSingleServer implement
         }
 	}
 	
-    /*
-    * TODO 7: Change the logic of the Acknowledgement system such that either
-    * a) only a majority of ACKs are needed 
-    * b) only alive node ACKs are needed
-    */
 	private void enqueue(){
 		notAcked = new CopyOnWriteArrayList<String>();
 		for (String node : this.serverMessenger.getNodeConfig().getNodeIDs()){
@@ -664,6 +706,11 @@ public class MyDBFaultTolerantServerZK extends server.MyDBSingleServer implement
 		}
 	}
 	
+    /*
+    * TODO 7: Change the logic of the Acknowledgement system such that either
+    * a) only a majority of ACKs are needed 
+    * b) only alive node ACKs are needed
+    */
 	private boolean dequeue(String node) {
 		if(!notAcked.remove(node)){
 			log.log(Level.SEVERE, "The leader does not have the key {0} in its notAcked", new Object[]{node});
