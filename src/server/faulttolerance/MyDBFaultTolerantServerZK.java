@@ -26,6 +26,8 @@ import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.logging.Level;
 import java.util.stream.Collectors;
 
+import javax.sound.midi.MidiDevice.Info;
+
 import org.apache.zookeeper.*;
 import org.apache.zookeeper.data.Stat;
 import org.json.JSONException;
@@ -238,7 +240,7 @@ public class MyDBFaultTolerantServerZK extends server.MyDBSingleServer implement
 		String leaderPath = ZK_ELECTION_PATH + "/" + leaderZnode;
 		// System.out.println("Leader path is " + leaderPath);
 		this.leader = new String(this.zk.getData(leaderPath, false, null), StandardCharsets.UTF_8);
-		// System.out.println("Leader is " + this.leader);
+		System.out.println("Leader is " + this.leader);
 
 
         /**
@@ -440,9 +442,12 @@ public class MyDBFaultTolerantServerZK extends server.MyDBSingleServer implement
     protected void logRequest(String znode, String query){
         try{
             String oldLog = new String(this.zk.getData(znode, false, null), StandardCharsets.UTF_8);
+            System.out.println("Old Log: " + oldLog);
             String newLog = oldLog + "\n" + query;
+            System.out.println("New Log: " + newLog);
             this.zk.setData(znode,newLog.getBytes(), -1);
             String savedLog = new String(this.zk.getData(znode, false, null), StandardCharsets.UTF_8);
+            log.log(Level.INFO, "Saved Log at the znode {0}: ", savedLog);
             System.out.println(savedLog + "Saved Log at the znode");
         }
         catch (KeeperException | InterruptedException e) {
@@ -498,7 +503,7 @@ public class MyDBFaultTolerantServerZK extends server.MyDBSingleServer implement
 					 */
 
                     
-                    logRequest(ZK_SERVICE_PATH, json.getString(MyDBClient.Keys.REQUEST.toString()))
+                    logRequest(ZK_SERVICE_PATH, json.getString(MyDBClient.Keys.REQUEST.toString()));
                     
 					queue.put(reqId, json);
 					log.log(Level.INFO, "{0} put request {1} into the queue.",
@@ -511,6 +516,7 @@ public class MyDBFaultTolerantServerZK extends server.MyDBSingleServer implement
 							proposal.put(MyDBClient.Keys.TYPE.toString(), Type.PROPOSAL.toString());
 							enqueue();
 							broadcastRequest(proposal);
+                            removeRequestFromLog(ZK_SERVICE_PATH);
                             /**
 						 		* TODO 2: remove the request from leader server's znode since the leader has broadcasted all requests
 						 	*/
