@@ -248,7 +248,7 @@ public class MyDBFaultTolerantServerZK extends server.MyDBSingleServer implement
             String[] Queue = QueueString.split("\n");
             for (String request: Queue){
                 //System.out.println("Request in the queue" + request);
-                String[] requestParts = request.split(" ");
+                String[] requestParts = request.split(" ", 2); // split({char to split by}, {limit on how many parts its split into})
                 Long reqId = Long.parseLong(requestParts[0]);
                 String query = requestParts[1];
                 JSONObject json = null;
