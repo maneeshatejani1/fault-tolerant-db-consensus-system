@@ -245,12 +245,20 @@ public class MyDBFaultTolerantServerZK extends server.MyDBSingleServer implement
     private void recoverLeaderQueue() {
         try{
             String QueueString = new String(this.zk.getData(ZK_SERVICE_PATH, false, null), StandardCharsets.UTF_8);
+            if (QueueString.isEmpty()){
+                return;
+            }
             String[] Queue = QueueString.split("\n");
             for (String request: Queue){
                 //System.out.println("Request in the queue" + request);
                 String[] requestParts = request.split(" ", 2); // split({char to split by}, {limit on how many parts its split into})
+                for (String part: requestParts){
+                    System.out.println("Part" + part);
+                }
                 Long reqId = Long.parseLong(requestParts[0]);
                 String query = requestParts[1];
+                log.log(Level.INFO, "Query is {0}", query);
+                System.out.println("Query is" + query);
                 JSONObject json = null;
                 try {
                     json = new JSONObject(query);
@@ -282,7 +290,7 @@ public class MyDBFaultTolerantServerZK extends server.MyDBSingleServer implement
          * Fetch /service znode requests
          * 
 		 */
-        // recoverLeaderQueue();
+        recoverLeaderQueue();
     }
 
     public void exportDataToCSV() {
