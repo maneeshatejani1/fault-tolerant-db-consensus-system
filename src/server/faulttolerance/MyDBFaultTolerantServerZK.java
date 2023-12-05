@@ -19,6 +19,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -100,6 +101,8 @@ public class MyDBFaultTolerantServerZK extends server.MyDBSingleServer implement
 
     protected String leader;
 	protected String leaderZnode;
+    protected int aliveCount;
+    private int deadCount;
     
     // this is the message queue used to track which messages have not been sent yet
     private ConcurrentHashMap<Long, JSONObject> queue = new ConcurrentHashMap<Long, JSONObject>();
@@ -148,27 +151,47 @@ public class MyDBFaultTolerantServerZK extends server.MyDBSingleServer implement
                                 return true;
                             }
                         }, true);
+        this.aliveCount = this.serverMessenger.getNodeConfig().getNodeIDs().size();
+        deadCount = 0;
         //Setting up Znodes for leader election and Logging          
         try {
             this.zk = new ZooKeeper(ZK_HOST + ":" + DEFAULT_PORT, 3000, this);
 
 			// Check if election path exists
+            Thread.sleep(1000);
 			Stat statElection = zk.exists(ZK_ELECTION_PATH, false);
-            if (statElection == null) 
+            if (statElection == null){
                 zk.create(ZK_ELECTION_PATH, "".getBytes(), ZooDefs.Ids.OPEN_ACL_UNSAFE, CreateMode.PERSISTENT);	
+            }
+            else {
+                System.out.println("Election ZNODE already exists");
+            }
+                
             
 			// Create an ephemeral znode for the replica
 			this.zk.create(ZK_ELECTION_PATH + "/" + "znode_", this.myID.getBytes(), ZooDefs.Ids.OPEN_ACL_UNSAFE, CreateMode.EPHEMERAL_SEQUENTIAL);
 
 			//Check if Service path already exists
+            Thread.sleep(1000);
             Stat statService = zk.exists(ZK_SERVICE_PATH , false);
-            if (statService == null)
+            if (statService == null){
                 zk.create(ZK_SERVICE_PATH, "".getBytes(), ZooDefs.Ids.OPEN_ACL_UNSAFE, CreateMode.PERSISTENT);
+            }
+            else {
+                System.out.println("Service ZNODE already exists");
+            }
+                
 			
 			//Check if server znode already exists and create it if it doesn't exist
+            Thread.sleep(1000);
 			Stat statServiceServer = zk.exists(ZK_SERVICE_PATH + "/" + this.myID , false);
-			if (statServiceServer == null)
-                zk.create(ZK_SERVICE_PATH + "/" + this.myID, this.myID.getBytes(), ZooDefs.Ids.OPEN_ACL_UNSAFE, CreateMode.PERSISTENT);
+			if (statServiceServer == null) {
+                zk.create(ZK_SERVICE_PATH + "/" + this.myID, "".getBytes(), ZooDefs.Ids.OPEN_ACL_UNSAFE, CreateMode.PERSISTENT);
+            }
+            else {
+                System.out.println("Service path for this server already exists. Implies crashed server has come back up");
+            }
+                
             
 			// elect a leader using cassandra's znodes 
             // List<String> children = zk.getChildren(ZK_ELECTION_PATH, true);
@@ -176,6 +199,7 @@ public class MyDBFaultTolerantServerZK extends server.MyDBSingleServer implement
 			// System.out.println(children.toString());
 
             // Set a watch on the replicas znode to monitor changes
+            Thread.sleep(1000);
             zk.exists(ZK_ELECTION_PATH, true);
 
             checkLeader(); 
@@ -194,7 +218,7 @@ public class MyDBFaultTolerantServerZK extends server.MyDBSingleServer implement
         // run commands again from logs
         try{
             byte[] currentData = zk.getData(ZK_SERVICE_PATH + "/" + myID, false, null);
-            String[] currentLog = new String(currentData).split("\r\n|\r|\n");
+            String[] currentLog = new String(currentData).split("\\n");
 
             for (String line : currentLog) {
                 String[] parts = line.split("\\s+", 2);
@@ -205,6 +229,7 @@ public class MyDBFaultTolerantServerZK extends server.MyDBSingleServer implement
 
                     // Call session.execute with the requestString
                     session.execute(requestString);
+                    System.out.println("Recovered query is "+ requestString);
                 }
             }
         } catch (KeeperException | InterruptedException e){
@@ -243,6 +268,7 @@ public class MyDBFaultTolerantServerZK extends server.MyDBSingleServer implement
         
             case NodeChildrenChanged:
                 checkLeader();
+                // dequeDeadNodes();
                 break;
 
             default:
@@ -263,6 +289,20 @@ public class MyDBFaultTolerantServerZK extends server.MyDBSingleServer implement
         }
     }
 
+    // private void dequeDeadNodes() {
+    //     try{
+    //         Set<String> aliveChildren = new HashSet<>(getAliveNodes());
+    //         for(String node : this.serverMessenger.getNodeConfig().getNodeIDs()){
+    //             if (!aliveChildren.contains(node)) {
+    //                 if(!notAcked.remove(node)){
+	// 		            log.log(Level.SEVERE, "The leader does not have the key {0} in its notAcked", new Object[]{node});
+	// 	            }
+    //             }  
+    //         }
+    //     } catch (Exception e) {
+    //         e.printStackTrace();
+    //     }
+    // }
     private void recoverLeaderQueue() {
         try{
             String QueueString = new String(this.zk.getData(ZK_SERVICE_PATH, false, null), StandardCharsets.UTF_8);
@@ -299,19 +339,17 @@ public class MyDBFaultTolerantServerZK extends server.MyDBSingleServer implement
 
     // 'children' meant to be the list of znode children of the election
     private void electLeader(List<String> children) throws KeeperException, InterruptedException{
-        leaderZnode = Collections.min(children);
-		String leaderPath = ZK_ELECTION_PATH + "/" + leaderZnode;
-		// System.out.println("Leader path is " + leaderPath);
-		this.leader = new String(this.zk.getData(leaderPath, false, null), StandardCharsets.UTF_8);
-		System.out.println("Leader is " + this.leader);
-        
-
-        /**
-		 * TODO 4: Once a leader is elected, it needs to check if it is the leader and then restore the the previous leader's state. Basically check if the previous leader left any pending requests before crashing and if so,and execute those requests in the same manner that the leader does : i.e getting acks all alive servers before moving to the next one.
-         * Fetch /service znode requests
-         * 
-		 */
-        recoverLeaderQueue();
+        try {
+            leaderZnode = Collections.min(children);
+            String leaderPath = ZK_ELECTION_PATH + "/" + leaderZnode;
+            // System.out.println("Leader path is " + leaderPath);
+            this.leader = new String(this.zk.getData(leaderPath, false, null), StandardCharsets.UTF_8);
+            System.out.println("Leader is " + this.leader);
+            recoverLeaderQueue();
+        }
+        catch(KeeperException | InterruptedException e) {
+            e.printStackTrace();
+        }
     }
 
     public void exportDataToCSV() {
@@ -586,6 +624,7 @@ public class MyDBFaultTolerantServerZK extends server.MyDBSingleServer implement
 			} else if (type.equals(Type.PROPOSAL.toString())) {
 				
 				// execute the query and send back the acknowledgement
+                System.out.println("Received a PROPOSAL");
 				String query = json.getString(MyDBClient.Keys.REQUEST.toString());
 				long reqId = json.getLong(MyDBClient.Keys.REQNUM.toString());
 
@@ -594,7 +633,7 @@ public class MyDBFaultTolerantServerZK extends server.MyDBSingleServer implement
 				
 
 				session.execute(query);
-                //System.out.println("Query is " + query);
+                System.out.println("Query is " + query);
 				
 				JSONObject response = new JSONObject().put(MyDBClient.Keys.RESPONSE.toString(), this.myID)
 						.put(MyDBClient.Keys.REQNUM.toString(), reqId)
@@ -607,6 +646,7 @@ public class MyDBFaultTolerantServerZK extends server.MyDBSingleServer implement
 					String node = json.getString(MyDBClient.Keys.RESPONSE.toString());
 					if (dequeue(node)){
 						// if the leader has received all acks, then prepare to send the next request
+                        System.out.println("Received acknowledgments from all alive Servers");
 						expected++;
 						executeQueue(expected);
 					}
@@ -667,6 +707,10 @@ public class MyDBFaultTolerantServerZK extends server.MyDBSingleServer implement
             String query = req.getString(MyDBClient.Keys.REQNUM.toString());
             for (String node : allNodes){
                 if (!aliveNodes.contains(node)) {
+                    Stat statServiceServer = zk.exists(ZK_SERVICE_PATH + "/" + node , false);
+                    if (statServiceServer == null) {
+                        zk.create(ZK_SERVICE_PATH + "/" + node, "".getBytes(), ZooDefs.Ids.OPEN_ACL_UNSAFE, CreateMode.PERSISTENT);
+                    }
                     // Get current log
                     byte[] currentData = zk.getData(ZK_SERVICE_PATH + "/" + node, false, null);
                     String currentLog = new String(currentData);
@@ -690,8 +734,11 @@ public class MyDBFaultTolerantServerZK extends server.MyDBSingleServer implement
 	
 	private void enqueue(){
 		notAcked = new CopyOnWriteArrayList<String>();
+        Set<String> aliveChildren = new HashSet<>(getAliveNodes());
 		for (String node : this.serverMessenger.getNodeConfig().getNodeIDs()){
-            notAcked.add(node);
+            if (aliveChildren.contains(node)) {
+                notAcked.add(node);
+            }
 		}
 	}
 	
