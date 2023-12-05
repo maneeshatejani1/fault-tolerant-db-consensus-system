@@ -286,7 +286,7 @@ public class MyDBFaultTolerantServerZK extends server.MyDBSingleServer implement
     private void recoverLeaderQueue() {
         try{
             String QueueString = new String(this.zk.getData(ZK_SERVICE_PATH, false, null), StandardCharsets.UTF_8);
-            System.out.println("Leader Logs\n" + QueueString);
+            // System.out.println("Leader Logs\n" + QueueString);
             if (QueueString.isEmpty()){
                 return;
             }
@@ -325,7 +325,7 @@ public class MyDBFaultTolerantServerZK extends server.MyDBSingleServer implement
             String leaderPath = ZK_ELECTION_PATH + "/" + leaderZnode;
             // System.out.println("Leader path is " + leaderPath);
             this.leader = new String(this.zk.getData(leaderPath, false, null), StandardCharsets.UTF_8);
-            System.out.println("Leader is " + this.leader);
+            // System.out.println("Leader is " + this.leader);
             if (this.myID == this.leader){
                 recoverLeaderQueue();
             }
@@ -629,7 +629,7 @@ public class MyDBFaultTolerantServerZK extends server.MyDBSingleServer implement
 					String node = json.getString(MyDBClient.Keys.RESPONSE.toString());
 					if (dequeue(node)){
 						// if the leader has received all acks, then prepare to send the next request
-                        System.out.println("Received acknowledgments from all alive Servers");
+                        // System.out.println("Received acknowledgments from all alive Servers");
 						expected++;
 						executeQueue(expected);
 					}
@@ -707,7 +707,7 @@ public class MyDBFaultTolerantServerZK extends server.MyDBSingleServer implement
                     zk.setData(ZK_SERVICE_PATH + "/" + node, newLog.getBytes(), -1);
                 } else {
                     this.serverMessenger.send(node, req.toString().getBytes());
-                    System.out.println("Sent Proposal to server" + node);
+                    // System.out.println("Sent Proposal to server" + node);
                 }
             }
             log.log(Level.INFO, "The leader has broadcast the request {0}", new Object[]{req});
@@ -719,13 +719,13 @@ public class MyDBFaultTolerantServerZK extends server.MyDBSingleServer implement
 	private void enqueue(){
 		notAcked = new CopyOnWriteArrayList<String>();
         Set<String> aliveChildren = new HashSet<>(getAliveNodes());
-        System.out.println("Alive Nodes" + aliveChildren.toString());
+        // System.out.println("Alive Nodes" + aliveChildren.toString());
 		for (String node : this.serverMessenger.getNodeConfig().getNodeIDs()){
             if (aliveChildren.contains(node)) {
                 notAcked.add(node);
             }
 		}
-        System.out.println("Nodes that have to acknowlede" + notAcked.toString());
+        // System.out.println("Nodes that have to acknowlede" + notAcked.toString());
 	}
 	
     /*
@@ -738,7 +738,7 @@ public class MyDBFaultTolerantServerZK extends server.MyDBSingleServer implement
 			log.log(Level.SEVERE, "The leader does not have the key {0} in its notAcked", new Object[]{node});
 		}
         else{
-            System.out.println("Received acknowldegment from node" + node);
+            // System.out.println("Received acknowldegment from node" + node);
         }
 		if(notAcked.size() == 0)
 			return true;
