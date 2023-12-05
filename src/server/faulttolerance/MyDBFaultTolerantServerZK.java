@@ -159,12 +159,12 @@ public class MyDBFaultTolerantServerZK extends server.MyDBSingleServer implement
 
 			// Check if election path exists
             Thread.sleep(1000);
-			Stat statElection = zk.exists(ZK_ELECTION_PATH, false);
+			Stat statElection = this.zk.exists(ZK_ELECTION_PATH, false);
             if (statElection == null){
-                zk.create(ZK_ELECTION_PATH, "".getBytes(), ZooDefs.Ids.OPEN_ACL_UNSAFE, CreateMode.PERSISTENT);	
+                this.zk.create(ZK_ELECTION_PATH, "".getBytes(), ZooDefs.Ids.OPEN_ACL_UNSAFE, CreateMode.PERSISTENT);	
             }
             else {
-                System.out.println("Election ZNODE already exists");
+                // System.out.println("Election ZNODE already exists");
             }
                 
             
@@ -173,12 +173,12 @@ public class MyDBFaultTolerantServerZK extends server.MyDBSingleServer implement
 
 			//Check if Service path already exists
             Thread.sleep(1000);
-            Stat statService = zk.exists(ZK_SERVICE_PATH , false);
+            Stat statService = this.zk.exists(ZK_SERVICE_PATH , false);
             if (statService == null){
-                zk.create(ZK_SERVICE_PATH, "".getBytes(), ZooDefs.Ids.OPEN_ACL_UNSAFE, CreateMode.PERSISTENT);
+                this.zk.create(ZK_SERVICE_PATH, "".getBytes(), ZooDefs.Ids.OPEN_ACL_UNSAFE, CreateMode.PERSISTENT);
             }
             else {
-                System.out.println("Service ZNODE already exists");
+                // System.out.println("Service ZNODE already exists");
             }
                 
 			
@@ -189,18 +189,12 @@ public class MyDBFaultTolerantServerZK extends server.MyDBSingleServer implement
                 zk.create(ZK_SERVICE_PATH + "/" + this.myID, "".getBytes(), ZooDefs.Ids.OPEN_ACL_UNSAFE, CreateMode.PERSISTENT);
             }
             else {
-                System.out.println("Service path for this server already exists. Implies crashed server has come back up");
+                // System.out.println("Service path for this server already exists. Implies crashed server has come back up");
             }
-                
-            
-			// elect a leader using cassandra's znodes 
-            // List<String> children = zk.getChildren(ZK_ELECTION_PATH, true);
-			// System.out.println("List of Children");
-			// System.out.println(children.toString());
 
             // Set a watch on the replicas znode to monitor changes
             Thread.sleep(1000);
-            zk.exists(ZK_ELECTION_PATH, true);
+            this.zk.exists(ZK_ELECTION_PATH, true);
 
             checkLeader(); 
         } catch (KeeperException | InterruptedException | IOException e) {
@@ -217,6 +211,7 @@ public class MyDBFaultTolerantServerZK extends server.MyDBSingleServer implement
 
         // run commands again from logs
         try{
+            Thread.sleep(2000);
             byte[] currentData = zk.getData(ZK_SERVICE_PATH + "/" + myID, false, null);
             String[] currentLog = new String(currentData).split("\\n");
 
@@ -229,7 +224,7 @@ public class MyDBFaultTolerantServerZK extends server.MyDBSingleServer implement
 
                     // Call session.execute with the requestString
                     session.execute(requestString);
-                    System.out.println("Recovered query is "+ requestString);
+                    // System.out.println("Recovered query is "+ requestString);
                 }
             }
         } catch (KeeperException | InterruptedException e){
@@ -243,7 +238,8 @@ public class MyDBFaultTolerantServerZK extends server.MyDBSingleServer implement
 	public List<String> getAliveNodes() {
         try{
             //get a list of all alive nodes 
-            List<String> children = zk.getChildren(ZK_ELECTION_PATH, true);
+            Thread.sleep(2000);
+            List<String> children = zk.getChildren(ZK_ELECTION_PATH, false);
             List<String> dataFromChildren = new ArrayList<>();
             for(String child : children){
                 String childPath = ZK_ELECTION_PATH + "/" + child;
@@ -268,7 +264,6 @@ public class MyDBFaultTolerantServerZK extends server.MyDBSingleServer implement
         
             case NodeChildrenChanged:
                 checkLeader();
-                // dequeDeadNodes();
                 break;
 
             default:
@@ -288,24 +283,10 @@ public class MyDBFaultTolerantServerZK extends server.MyDBSingleServer implement
             e.printStackTrace();
         }
     }
-
-    // private void dequeDeadNodes() {
-    //     try{
-    //         Set<String> aliveChildren = new HashSet<>(getAliveNodes());
-    //         for(String node : this.serverMessenger.getNodeConfig().getNodeIDs()){
-    //             if (!aliveChildren.contains(node)) {
-    //                 if(!notAcked.remove(node)){
-	// 		            log.log(Level.SEVERE, "The leader does not have the key {0} in its notAcked", new Object[]{node});
-	// 	            }
-    //             }  
-    //         }
-    //     } catch (Exception e) {
-    //         e.printStackTrace();
-    //     }
-    // }
     private void recoverLeaderQueue() {
         try{
             String QueueString = new String(this.zk.getData(ZK_SERVICE_PATH, false, null), StandardCharsets.UTF_8);
+            System.out.println("Leader Logs\n" + QueueString);
             if (QueueString.isEmpty()){
                 return;
             }
@@ -314,12 +295,12 @@ public class MyDBFaultTolerantServerZK extends server.MyDBSingleServer implement
                 //System.out.println("Request in the queue" + request);
                 String[] requestParts = request.split(" ", 2); // split({char to split by}, {limit on how many parts its split into})
                 for (String part: requestParts){
-                    System.out.println("Part" + part);
+                    // System.out.println("Part" + part);
                 }
                 Long reqId = Long.parseLong(requestParts[0]);
                 String query = requestParts[1];
                 log.log(Level.INFO, "Query is {0}", query);
-                System.out.println("Query is" + query);
+                // System.out.println("Query is" + query);
                 JSONObject json = null;
                 try {
                     json = new JSONObject(query);
@@ -345,7 +326,9 @@ public class MyDBFaultTolerantServerZK extends server.MyDBSingleServer implement
             // System.out.println("Leader path is " + leaderPath);
             this.leader = new String(this.zk.getData(leaderPath, false, null), StandardCharsets.UTF_8);
             System.out.println("Leader is " + this.leader);
-            recoverLeaderQueue();
+            if (this.myID == this.leader){
+                recoverLeaderQueue();
+            }
         }
         catch(KeeperException | InterruptedException e) {
             e.printStackTrace();
@@ -555,7 +538,7 @@ public class MyDBFaultTolerantServerZK extends server.MyDBSingleServer implement
             String newLog;
 
             // Check if the log has reached MAX_LOG_SIZE, make checkpoint and clear log if so
-            if (currentLog.split("\r\n|\r|\n").length >= MAX_LOG_SIZE) {
+            if (currentLog.split("\\n").length >= MAX_LOG_SIZE) {
                 exportDataToCSV();
                 newLog = reqId + " " + query;
             } else {
@@ -624,7 +607,7 @@ public class MyDBFaultTolerantServerZK extends server.MyDBSingleServer implement
 			} else if (type.equals(Type.PROPOSAL.toString())) {
 				
 				// execute the query and send back the acknowledgement
-                System.out.println("Received a PROPOSAL");
+                // System.out.println("Received a PROPOSAL");
 				String query = json.getString(MyDBClient.Keys.REQUEST.toString());
 				long reqId = json.getLong(MyDBClient.Keys.REQNUM.toString());
 
@@ -633,7 +616,7 @@ public class MyDBFaultTolerantServerZK extends server.MyDBSingleServer implement
 				
 
 				session.execute(query);
-                System.out.println("Query is " + query);
+                // System.out.println("Query is " + query);
 				
 				JSONObject response = new JSONObject().put(MyDBClient.Keys.RESPONSE.toString(), this.myID)
 						.put(MyDBClient.Keys.REQNUM.toString(), reqId)
@@ -724,6 +707,7 @@ public class MyDBFaultTolerantServerZK extends server.MyDBSingleServer implement
                     zk.setData(ZK_SERVICE_PATH + "/" + node, newLog.getBytes(), -1);
                 } else {
                     this.serverMessenger.send(node, req.toString().getBytes());
+                    System.out.println("Sent Proposal to server" + node);
                 }
             }
             log.log(Level.INFO, "The leader has broadcast the request {0}", new Object[]{req});
@@ -735,11 +719,13 @@ public class MyDBFaultTolerantServerZK extends server.MyDBSingleServer implement
 	private void enqueue(){
 		notAcked = new CopyOnWriteArrayList<String>();
         Set<String> aliveChildren = new HashSet<>(getAliveNodes());
+        System.out.println("Alive Nodes" + aliveChildren.toString());
 		for (String node : this.serverMessenger.getNodeConfig().getNodeIDs()){
             if (aliveChildren.contains(node)) {
                 notAcked.add(node);
             }
 		}
+        System.out.println("Nodes that have to acknowlede" + notAcked.toString());
 	}
 	
     /*
@@ -751,6 +737,9 @@ public class MyDBFaultTolerantServerZK extends server.MyDBSingleServer implement
 		if(!notAcked.remove(node)){
 			log.log(Level.SEVERE, "The leader does not have the key {0} in its notAcked", new Object[]{node});
 		}
+        else{
+            System.out.println("Received acknowldegment from node" + node);
+        }
 		if(notAcked.size() == 0)
 			return true;
 		return false;
